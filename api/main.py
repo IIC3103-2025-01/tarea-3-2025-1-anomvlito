@@ -11,16 +11,18 @@ class ExplainRequest(BaseModel):
     url: HttpUrl
     question: str
 
-class ExplainResponse(BaseModel):
+class ExplainResponse(BaseModel): # <--- MODIFICADO
     best_chunk: str
-    similarity_score: float # Para verificar qué tan relevante fue el chunk
+    similarity_score: float
+    llm_answer: str # Para la respuesta generada por el LLM
 
 # --- Configuración y Constantes ---
 EMBEDDING_API_URL = "https://asteroide.ing.uc.cl/api/embed"
 EMBEDDING_MODEL = "nomic-embed-text"
-# LLM_API_URL = "https://asteroide.ing.uc.cl/api/generate" # Lo usaremos después
-# LLM_MODEL = "integracion" # Lo usaremos después
-# LLM_SYSTEM_INSTRUCTION = """Eres un asistente experto...""" # Lo usaremos después
+LLM_API_URL = "https://asteroide.ing.uc.cl/api/generate" # <--- URL DEL LLM
+LLM_MODEL = "integracion" # <--- MODELO DEL LLM
+
+LLM_SYSTEM_INSTRUCTION = """Eres un asistente experto que procesa contenido parcial de wikipedia. Recibirás una instrucción con parte de artículos de wikipedia con el cual deberás responder preguntas sobre este. No uses información que sepas previamente del tema, sólo el contexto que te iré entregando. Responde las preguntas de forma asertiva, usando sólo la información provista.""" # <--- INSTRUCCIÓN DEL SISTEMA
 
 
 # --- Aplicación FastAPI ---
@@ -78,12 +80,53 @@ def get_embedding(text: str, attempt: int = 1, max_attempts: int = 3) -> list[fl
     except (KeyError, IndexError) as e:
         raise HTTPException(status_code=500, detail=f"Respuesta inesperada de API de Embeddings: {e}")
 
+# ... (después de get_embedding)
+
+def get_llm_response(context: str, question: str) -> str:
+    """
+    Obtiene una respuesta del LLM usando el contexto y la pregunta.
+    """
+    prompt_llm = f"{LLM_SYSTEM_INSTRUCTION}\n\nContexto del artículo de Wikipedia:\n{context}\n\nPregunta del usuario:\n{question}\n\nRespuesta:"
+
+    try:
+        response = requests.post(
+            LLM_API_URL,
+            json={
+                "model": LLM_MODEL,
+                "prompt": prompt_llm,
+                "stream": False
+            },
+            timeout=120 # Tiempo de espera máximo de 2 minutos como dice el enunciado
+        )
+        response.raise_for_status() 
+        
+        response_data = response.json()
+        
+        # El endpoint /api/generate devuelve la respuesta en el campo "response"
+        if "response" in response_data:
+            return response_data["response"]
+        else:
+            raise HTTPException(status_code=500, detail=f"Respuesta inesperada del LLM API (campo 'response' no encontrado): {response_data}")
+
+    except requests.Timeout:
+        raise HTTPException(status_code=408, detail="Timeout esperando respuesta del LLM API.")
+    except requests.RequestException as e:
+        error_detail = f"Error al conectar con el LLM API: {e}"
+        if e.response is not None:
+            error_detail += f" - Status: {e.response.status_code} - Body: {e.response.text}"
+        # El enunciado menciona manejar errores 503
+        status_code = e.response.status_code if e.response is not None and e.response.status_code == 503 else 503
+        raise HTTPException(status_code=status_code, detail=error_detail)
+    except (KeyError, IndexError) as e:
+         raise HTTPException(status_code=500, detail=f"Respuesta con formato incorrecto del LLM API: {e}")
 
 # --- Endpoints de la API ---
 
 @app.get("/")
 def read_root():
     return {"message": "API funcionando (foco en Embeddings). Visita /docs para la documentación."}
+
+# ... (endpoint @app.get("/"))
 
 @app.post("/explain", response_model=ExplainResponse)
 def explain_article(request: ExplainRequest):
@@ -100,7 +143,7 @@ def explain_article(request: ExplainRequest):
 
     # 4. Embeddings de los Chunks
     chunk_embeddings = []
-    valid_chunks = [] # Mantenemos solo los chunks para los que obtuvimos embedding
+    valid_chunks = [] 
     for i, chunk_text in enumerate(chunks):
         try:
             embedding = get_embedding(chunk_text)
@@ -109,7 +152,7 @@ def explain_article(request: ExplainRequest):
         except HTTPException as e:
             print(f"Advertencia: No se pudo generar embedding para el chunk {i} ('{chunk_text[:30]}...'): {e.detail}. Saltando.")
     
-    if not valid_chunks or not chunk_embeddings: # Si ningún chunk pudo ser procesado
+    if not valid_chunks or not chunk_embeddings:
         raise HTTPException(status_code=500, detail="No se pudieron generar embeddings para los chunks del artículo.")
 
     # 5. Cálculo de Similitud
@@ -120,11 +163,14 @@ def explain_article(request: ExplainRequest):
 
     # 6. Encontrar el Mejor Chunk
     most_relevant_chunk_index = np.argmax(similarities)
-    best_chunk_text = valid_chunks[most_relevant_chunk_index] # Usamos valid_chunks
+    best_chunk_text = valid_chunks[most_relevant_chunk_index] 
     best_similarity_score = float(similarities[most_relevant_chunk_index])
 
-    # 7. Devolver el mejor chunk y su similitud (sin LLM por ahora)
+    # 7. Llamar al LLM con el mejor chunk y la pregunta  <--- MODIFICACIÓN AQUÍ
+    llm_generated_answer = get_llm_response(context=best_chunk_text, question=request.question)
+
     return ExplainResponse(
         best_chunk=best_chunk_text,
-        similarity_score=best_similarity_score
+        similarity_score=best_similarity_score,
+        llm_answer=llm_generated_answer # <--- NUEVO CAMPO EN LA RESPUESTA
     )
