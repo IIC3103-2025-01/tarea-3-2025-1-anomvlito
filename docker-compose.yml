@@ -1,5 +1,9 @@
-version: "3.8"
+# Este archivo define los dos servicios que componen tu aplicación:
+# 1. El backend (llamado 'api')
+# 2. El frontend (llamado 'frontend')
+
 services:
+  # --- Definición del servicio del Backend ---
   api:
     build: ./api
     ports:
@@ -7,9 +11,14 @@ services:
     volumes:
       - ./api:/app
 
+  # --- Definición del servicio del Frontend ---
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
-      - "3000:3000"
-    volumes:s
+      - "5173:5173"
+    volumes:
       - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host 0.0.0.0 --port 5173

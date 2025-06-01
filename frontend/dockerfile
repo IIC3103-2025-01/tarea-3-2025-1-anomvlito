@@ -1,0 +1,16 @@
+# Usamos la imagen estándar y compatible de Node.js v20
+FROM node:20
+
+# Establecemos el directorio de trabajo
+WORKDIR /app
+
+# Copiamos los archivos de dependencias para aprovechar el caché de Docker
+COPY package*.json ./
+
+# Instalamos las dependencias
+RUN npm install
+
+# Exponemos el puerto de Vite (5173 es el default de Vite 3+)
+EXPOSE 5173
+
+# El comando de inicio se define en docker-compose.yml para mayor flexibilidad

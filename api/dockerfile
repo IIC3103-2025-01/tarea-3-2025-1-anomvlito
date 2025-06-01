@@ -1,0 +1,21 @@
+# Usa una imagen oficial de Python como base
+FROM python:3.9-slim
+
+# Establece el directorio de trabajo dentro del contenedor
+WORKDIR /app
+
+# Copia el archivo de requerimientos al directorio de trabajo
+COPY requirements.txt .
+
+# Instala las dependencias de Python definidas en requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copia el resto de los archivos de la API al directorio de trabajo
+COPY . .
+
+# Expone el puerto 8000 para que docker-compose pueda mapearlo
+EXPOSE 8000
+
+# El comando que se ejecutará cuando el contenedor se inicie
+# --- MODIFICACIÓN AQUÍ: Añadimos --reload ---
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
