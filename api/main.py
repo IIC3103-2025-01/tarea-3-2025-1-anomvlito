@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware # <--- IMPORTA ESTO
 from pydantic import BaseModel, HttpUrl
 import requests
 from bs4 import BeautifulSoup
@@ -30,6 +31,22 @@ app = FastAPI(
     title="Wikipedia Explainer API - Embedding Focus",
     description="API para obtener el chunk más relevante de Wikipedia usando embeddings.",
     version="1.1.0" # Incrementamos versión para reflejar el foco actual
+)
+
+
+# --- CONFIGURACIÓN DE CORS --- <--- AÑADE ESTAS LÍNEAS
+origins = [
+    "http://localhost",         # Origen base
+    "http://localhost:5173",    # Tu frontend de Vite
+    # Podrías añadir más orígenes si despliegas tu frontend en otro lugar
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins, # Lista de orígenes permitidos (puedes usar ["*"] para permitir todos)
+    allow_credentials=True, # Permite cookies (no relevante para ti ahora, pero es común)
+    allow_methods=["*"],    # Permite todos los métodos (GET, POST, etc.)
+    allow_headers=["*"],    # Permite todas las cabeceras
 )
 
 # --- Funciones de Lógica ---
