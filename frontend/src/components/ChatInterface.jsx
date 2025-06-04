@@ -9,8 +9,7 @@ import {
   Alert,
   Row,
   Col,
-  InputGroup,
-} from "react-bootstrap"; // Añadí InputGroup
+} from "react-bootstrap";
 
 function ChatInterface() {
   const [wikiURL, setWikiURL] = useState("");
@@ -35,7 +34,8 @@ function ChatInterface() {
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
+
     if (!wikiURL.trim()) {
       setError("Por favor, ingresa la URL del artículo de Wikipedia.");
       return;
@@ -47,17 +47,17 @@ function ChatInterface() {
     setError(null);
     setIsLoading(true);
 
-    const currentQuestion = userQuestion;
-    // Actualizar conversación con el mensaje del usuario inmediatamente
-    setConversation((prev) => [
-      ...prev,
-      { sender: "user", text: currentQuestion },
+    const questionToSubmit = userQuestion;
+
+    setConversation((prevConversation) => [
+      ...prevConversation,
+      { sender: "user", text: questionToSubmit },
     ]);
     setUserQuestion("");
 
     console.log("Enviando al backend:", {
       url: wikiURL,
-      question: currentQuestion,
+      question: questionToSubmit,
     });
 
     try {
@@ -67,7 +67,7 @@ function ChatInterface() {
           "Content-Type": "application/json",
           accept: "application/json",
         },
-        body: JSON.stringify({ url: wikiURL, question: currentQuestion }),
+        body: JSON.stringify({ url: wikiURL, question: questionToSubmit }),
       });
 
       if (!response.ok) {
@@ -81,9 +81,8 @@ function ChatInterface() {
 
       const data = await response.json();
 
-      // Actualizar conversación con la respuesta del bot
-      setConversation((prev) => [
-        ...prev,
+      setConversation((prevConversation) => [
+        ...prevConversation,
         {
           sender: "bot",
           text: data.llm_answer,
@@ -97,13 +96,8 @@ function ChatInterface() {
       const errorMessage =
         err.message || "Ocurrió un error al procesar la solicitud.";
       setError(errorMessage);
-      // Opcional: añadir el error al chat
-      // setConversation(prev => [
-      //   ...prev,
-      //   { sender: 'bot', text: `Error: ${errorMessage}` }
-      // ]);
     } finally {
-      setIsLoading(false); // Asegurar que isLoading se desactiva al final, ya sea éxito o error
+      setIsLoading(false);
     }
   };
 
@@ -112,9 +106,8 @@ function ChatInterface() {
       <Card>
         <Card.Header as="h2">Wikipedia Explainer Chat</Card.Header>
         <Card.Body>
+          {/* El Formulario Principal ahora envuelve la URL, el área de pregunta y los botones de acción */}
           <Form onSubmit={handleSubmit}>
-            {" "}
-            {/* Movimos el Form para que envuelva el input de pregunta y los botones */}
             <Form.Group className="mb-3">
               <Form.Label>
                 URL del Artículo de Wikipedia (en inglés):
@@ -128,6 +121,7 @@ function ChatInterface() {
                 required
               />
             </Form.Group>
+
             {/* Área de la Conversación */}
             <div
               className="mb-3"
@@ -183,15 +177,34 @@ function ChatInterface() {
                   </Card>
                 </div>
               ))}
+              {isLoading &&
+                conversation.length > 0 &&
+                conversation[conversation.length - 1].sender === "user" && (
+                  <div className="d-flex justify-content-start mb-2">
+                    <Card
+                      bg="light"
+                      text="dark"
+                      style={{
+                        maxWidth: "75%",
+                        padding: "0.5rem 1rem",
+                        borderRadius: "15px 15px 15px 0",
+                      }}
+                    >
+                      <Spinner
+                        animation="border"
+                        size="sm"
+                        as="span"
+                        role="status"
+                        aria-hidden="true"
+                      />
+                      <span className="ms-2">Pensando...</span>
+                    </Card>
+                  </div>
+                )}
               <div ref={chatEndRef} />
             </div>
-            {isLoading && (
-              <div className="text-center my-2">
-                <Spinner animation="border" size="sm" /> Procesando tu
-                pregunta...
-              </div>
-            )}
-            {error && (
+
+            {error && !isLoading && (
               <Alert
                 variant="danger"
                 onClose={() => setError(null)}
@@ -200,6 +213,7 @@ function ChatInterface() {
                 {error}
               </Alert>
             )}
+
             <Form.Group className="mb-3">
               <Form.Label visuallyHidden>Tu Pregunta:</Form.Label>
               <Form.Control
@@ -210,37 +224,61 @@ function ChatInterface() {
                 onChange={(e) => setUserQuestion(e.target.value)}
                 disabled={isLoading}
                 required
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    if (!isLoading && wikiURL.trim() && userQuestion.trim()) {
+                      handleSubmit(e);
+                    }
+                  }
+                }}
               />
             </Form.Group>
-            {/* --- MODIFICACIÓN AQUÍ para los botones --- */}
-            <Row>
-              <Col>
+
+            {/* Fila para los botones */}
+            <Row className="mt-3">
+              {" "}
+              {/* Añadido un pequeño margen superior a la fila de botones */}
+              <Col xs={12} md={6} className="mb-2 mb-md-0 d-grid">
                 {" "}
-                {/* Columna para el botón Nuevo Chat */}
+                {/* d-grid para que el botón ocupe el ancho */}
                 <Button
                   variant="outline-secondary"
                   onClick={handleNewChat}
-                  className="w-100" // Para que ocupe el ancho de su columna
-                  disabled={isLoading} // Deshabilitar si está cargando
+                  disabled={isLoading}
                 >
                   Nuevo Chat
                 </Button>
               </Col>
-              <Col>
+              <Col xs={12} md={6} className="d-grid">
                 {" "}
-                {/* Columna para el botón Enviar Pregunta */}
+                {/* d-grid para que el botón ocupe el ancho */}
                 <Button
                   variant="primary"
                   type="submit"
-                  className="w-100" // Para que ocupe el ancho de su columna
-                  disabled={isLoading || !wikiURL.trim()}
+                  disabled={
+                    isLoading || !wikiURL.trim() || !userQuestion.trim()
+                  }
                 >
-                  {isLoading ? "Enviando..." : "Enviar Pregunta"}
+                  {isLoading ? (
+                    <>
+                      <Spinner
+                        as="span"
+                        animation="border"
+                        size="sm"
+                        role="status"
+                        aria-hidden="true"
+                      />
+                      <span className="ms-2">Enviando...</span>
+                    </>
+                  ) : (
+                    "Enviar Pregunta"
+                  )}
                 </Button>
               </Col>
             </Row>
-            {/* Fin de la modificación de botones */}
-          </Form>
+          </Form>{" "}
+          {/* Fin del Form principal */}
         </Card.Body>
       </Card>
     </Container>
@@ -248,4 +286,3 @@ function ChatInterface() {
 }
 
 export default ChatInterface;
- 
