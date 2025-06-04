@@ -55,13 +55,19 @@ function ChatInterface() {
     ]);
     setUserQuestion("");
 
+    // LÍNEA 1 MODIFICADA/AÑADIDA: Definir API_BASE_URL leyendo de variables de entorno
+    const API_BASE_URL =
+      import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+
     console.log("Enviando al backend:", {
       url: wikiURL,
       question: questionToSubmit,
     });
+    console.log("Usando API_BASE_URL:", API_BASE_URL); // Para depurar
 
     try {
-      const response = await fetch("http://localhost:8000/explain", {
+      // LÍNEA 2 MODIFICADA: Usar API_BASE_URL en la URL del fetch
+      const response = await fetch(`${API_BASE_URL}/explain`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -106,7 +112,6 @@ function ChatInterface() {
       <Card>
         <Card.Header as="h2">Wikipedia Explainer Chat</Card.Header>
         <Card.Body>
-          {/* El Formulario Principal ahora envuelve la URL, el área de pregunta y los botones de acción */}
           <Form onSubmit={handleSubmit}>
             <Form.Group className="mb-3">
               <Form.Label>
@@ -121,8 +126,6 @@ function ChatInterface() {
                 required
               />
             </Form.Group>
-
-            {/* Área de la Conversación */}
             <div
               className="mb-3"
               style={{
@@ -235,13 +238,8 @@ function ChatInterface() {
               />
             </Form.Group>
 
-            {/* Fila para los botones */}
             <Row className="mt-3">
-              {" "}
-              {/* Añadido un pequeño margen superior a la fila de botones */}
               <Col xs={12} md={6} className="mb-2 mb-md-0 d-grid">
-                {" "}
-                {/* d-grid para que el botón ocupe el ancho */}
                 <Button
                   variant="outline-secondary"
                   onClick={handleNewChat}
@@ -251,8 +249,6 @@ function ChatInterface() {
                 </Button>
               </Col>
               <Col xs={12} md={6} className="d-grid">
-                {" "}
-                {/* d-grid para que el botón ocupe el ancho */}
                 <Button
                   variant="primary"
                   type="submit"
@@ -278,7 +274,6 @@ function ChatInterface() {
               </Col>
             </Row>
           </Form>{" "}
-          {/* Fin del Form principal */}
         </Card.Body>
       </Card>
     </Container>
