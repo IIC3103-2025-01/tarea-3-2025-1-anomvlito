@@ -47,10 +47,11 @@ app = FastAPI(
 
 # --- Configuración de CORS ---
 origins = [
-    "http://localhost",
-    "http://localhost:5173",
-    # Añade aquí la URL de tu frontend desplegado cuando la tengas
+    "http://localhost:5173",  # Para desarrollo local, si aún lo necesitas
+    "https://tarea-3-2025-1-anomvlito.onrender.com",  # <--- TU FRONTEND DESPLEGADO
+    "https://tarea-3-2025-1-anomvlito-backend.onrender.com"  # Tu API, buena práctica
 ]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
