@@ -5,3 +5,4 @@ beautifulsoup4
 langchain
 numpy
 scikit-learn
+chromadb

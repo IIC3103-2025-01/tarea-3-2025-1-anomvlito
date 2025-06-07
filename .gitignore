@@ -26,3 +26,9 @@ node_modules
 
 # igonrar sh 
 *.sh
+
+# ingora cache de python
+*.pyc  
+
+
+.env

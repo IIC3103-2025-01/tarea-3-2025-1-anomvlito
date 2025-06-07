@@ -5,8 +5,9 @@ import requests
 from bs4 import BeautifulSoup
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
-import time  # Para un TTL simple en el caché (opcional)
+import time
+import re
+import chromadb
 
 # --- Modelos de Datos (Pydantic) ---
 
@@ -14,15 +15,13 @@ import time  # Para un TTL simple en el caché (opcional)
 class ExplainRequest(BaseModel):
     url: HttpUrl
     question: str
-    # Podríamos añadir un ID de sesión si quisiéramos conversaciones más complejas,
-    # pero por ahora la URL del artículo servirá como clave de caché.
 
 
 class ExplainResponse(BaseModel):
     best_chunk: str
     similarity_score: float
     llm_answer: str
-    from_cache: bool = False  # Para saber si se usó el caché
+    from_cache: bool = False
 
 
 # --- Configuración y Constantes ---
@@ -32,26 +31,26 @@ LLM_API_URL = "https://asteroide.ing.uc.cl/api/generate"
 LLM_MODEL = "integracion"
 LLM_SYSTEM_INSTRUCTION = """Eres un asistente experto que procesa contenido parcial de wikipedia. Recibirás una instrucción con parte de artículos de wikipedia con el cual deberás responder preguntas sobre este. No uses información que sepas previamente del tema, sólo el contexto que te iré entregando. Responde las preguntas de forma asertiva, usando sólo la información provista."""
 
-# --- Caché Simple en Memoria ---
-# La clave será la URL del artículo (str)
-# El valor será un diccionario: {"chunks": list[str], "embeddings": list[list[float]], "timestamp": float}
-article_cache = {}
-CACHE_TTL_SECONDS = 3600  # Tiempo de vida del caché en segundos (ej. 1 hora)
+SIMILARITY_THRESHOLD = 0.25
+
+# --- Cliente de ChromaDB en Memoria ---
+# Este cliente gestionará nuestras colecciones vectoriales en memoria.
+# Los datos se perderán si el servidor se reinicia.
+chroma_client = chromadb.Client()
 
 # --- Aplicación FastAPI ---
 app = FastAPI(
-    title="Wikipedia Explainer API con Caché",
-    description="API para obtener explicaciones de Wikipedia, con caché de artículos procesados.",
+    title="Wikipedia Explainer API",
+    description="API para obtener explicaciones de Wikipedia.",
     version="1.2.0"
 )
 
 # --- Configuración de CORS ---
 origins = [
-    "http://localhost:5173",  # Para desarrollo local, si aún lo necesitas
-    "https://tarea-3-2025-1-anomvlito.onrender.com",  # <--- TU FRONTEND DESPLEGADO
-    "https://tarea-3-2025-1-anomvlito-backend.onrender.com"  # Tu API, buena práctica
+    "http://localhost:5173",
+    "https://tarea-3-2025-1-anomvlito.onrender.com",
+    "https://tarea-3-2025-1-anomvlito-backend.onrender.com"
 ]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -60,13 +59,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Funciones de Lógica (scrape_wikipedia_content, split_text_into_chunks, get_embedding, get_llm_response) ---
-# Estas funciones permanecen igual que en la versión anterior, asegúrate de tenerlas.
-# Solo haré un pequeño ajuste en get_embedding para que sea más clara en caso de error de la API.
+# --- Funciones de Lógica ---
 
 
 def scrape_wikipedia_content(url: str) -> str:
-    # ... (código de scraping como lo teníamos)
     try:
         response = requests.get(url)
         response.raise_for_status()
@@ -89,69 +85,47 @@ def scrape_wikipedia_content(url: str) -> str:
 
 
 def split_text_into_chunks(text: str):
-    # ... (código de split_text_into_chunks como lo teníamos)
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
+        chunk_size=800,
+        chunk_overlap=150,
         length_function=len
     )
     return text_splitter.split_text(text)
 
 
 def get_embedding(text: str, attempt: int = 1, max_attempts: int = 3) -> list[float]:
-    # ... (código de get_embedding con reintentos como lo teníamos)
     try:
         response = requests.post(EMBEDDING_API_URL, json={
-                                 "model": EMBEDDING_MODEL, "input": text}, timeout=20)  # Timeout aumentado un poco
+                                 "model": EMBEDDING_MODEL, "input": text}, timeout=20)
         response.raise_for_status()
         return response.json()["embeddings"][0]
     except requests.Timeout:
         if attempt < max_attempts:
             print(
                 f"Timeout obteniendo embedding. Reintento {attempt+1}/{max_attempts} para: '{text[:30]}...'")
-            time.sleep(0.5 * attempt)  # Espera exponencial simple
+            time.sleep(0.5 * attempt)
             return get_embedding(text, attempt + 1, max_attempts)
         else:
-            print(
-                f"Error: Timeout final obteniendo embedding para: '{text[:30]}...'")
             raise HTTPException(
                 status_code=408, detail="Timeout después de varios reintentos con la API de Embeddings.")
     except requests.RequestException as e:
         error_detail = f"Error conectando con API de Embeddings: {e}"
-        status_code_error = 503  # Default a 503
         if e.response is not None:
             error_detail += f" - Status: {e.response.status_code} - Body: {e.response.text}"
-            status_code_error = e.response.status_code
-        print(f"Error: {error_detail} para texto: '{text[:30]}...'")
-        raise HTTPException(status_code=status_code_error, detail=error_detail)
-    # TypeError si response.json() falla o no es subscriptable
+        raise HTTPException(
+            status_code=e.response.status_code if e.response is not None else 503, detail=error_detail)
     except (KeyError, IndexError, TypeError) as e:
-        print(
-            f"Error: Respuesta inesperada de API de Embeddings para texto: '{text[:30]}...'. Error: {e}")
         raise HTTPException(
             status_code=500, detail=f"Respuesta inesperada de API de Embeddings: {e}")
 
 
 def get_llm_response(context: str, question: str) -> str:
-    # ... (código de get_llm_response como lo teníamos, con los 'options' para temperatura, etc.)
     prompt_llm = f"{LLM_SYSTEM_INSTRUCTION}\n\nContexto del artículo de Wikipedia:\n{context}\n\nPregunta del usuario:\n{question}\n\nRespuesta:"
-    llm_options = {
-        "temperature": 0.3,  # Temperatura más baja para respuestas más enfocadas
-        "num_ctx": 512,
-        "repeat_last_n": 10,
-        "top_k": 18
-    }
+    llm_options = {"temperature": 0.3, "num_ctx": 512,
+                   "repeat_last_n": 10, "top_k": 18}
     try:
-        response = requests.post(
-            LLM_API_URL,
-            json={
-                "model": LLM_MODEL,
-                "prompt": prompt_llm,
-                "stream": False,
-                "options": llm_options
-            },
-            timeout=120
-        )
+        response = requests.post(LLM_API_URL, json={
+                                 "model": LLM_MODEL, "prompt": prompt_llm, "stream": False, "options": llm_options}, timeout=120)
         response.raise_for_status()
         response_data = response.json()
         if "response" in response_data:
@@ -159,16 +133,13 @@ def get_llm_response(context: str, question: str) -> str:
         else:
             raise HTTPException(
                 status_code=500, detail=f"Respuesta inesperada del LLM API (campo 'response' no encontrado): {response_data}")
-    except requests.Timeout:
-        raise HTTPException(
-            status_code=408, detail="Timeout esperando respuesta del LLM API.")
     except requests.RequestException as e:
         error_detail = f"Error al conectar con el LLM API: {e}"
         if e.response is not None:
             error_detail += f" - Status: {e.response.status_code} - Body: {e.response.text}"
-        status_code = e.response.status_code if e.response is not None and e.response.status_code == 503 else 503
-        raise HTTPException(status_code=status_code, detail=error_detail)
-    except (KeyError, IndexError) as e:
+        raise HTTPException(
+            status_code=e.response.status_code if e.response is not None else 503, detail=error_detail)
+    except (KeyError, IndexError, TypeError) as e:
         raise HTTPException(
             status_code=500, detail=f"Respuesta con formato incorrecto del LLM API: {e}")
 
@@ -177,89 +148,111 @@ def get_llm_response(context: str, question: str) -> str:
 
 @app.get("/")
 def read_root():
-    return {"message": "API funcionando con caché. Visita /docs para la documentación."}
+    return {"message": "API funcionando con ChromaDB. Visita /docs para la documentación."}
 
 
 @app.post("/explain", response_model=ExplainResponse)
-# Hacemos la función async para poder usar await si fuera necesario con otras librerías
 async def explain_article(request: ExplainRequest):
+    """
+    Procesa un artículo de Wikipedia y una pregunta para generar una explicación.
+    Utiliza un umbral de similitud para evitar llamar al LLM con contexto irrelevante.
+    """
+    def sanitize_collection_name(url: str) -> str:
+        # Sanitiza la URL para usarla como un nombre de colección válido en ChromaDB.
+        name = re.sub(r'[^a-zA-Z0-9_-]', '', url)
+        name = name[:60]
+        if len(name) < 3:
+            name = name + 'x' * (3 - len(name))
+        return name
+
     article_url_str = str(request.url)
-    from_cache_flag = False
+    collection_name = sanitize_collection_name(article_url_str)
 
-    # Verificar si el artículo está en caché y si no ha expirado
-    if article_url_str in article_cache and (time.time() - article_cache[article_url_str]["timestamp"] < CACHE_TTL_SECONDS):
-        cached_data = article_cache[article_url_str]
-        chunks = cached_data["chunks"]
-        chunk_embeddings = cached_data["embeddings"]
-        from_cache_flag = True
-        print(f"Artículo {article_url_str} CARGADO DESDE CACHÉ.")
-    else:
+    # Usa get_or_create_collection para manejar la creación y obtención de forma segura.
+    collection = chroma_client.get_or_create_collection(name=collection_name)
+
+    # Verifica si la colección está vacía para decidir si se procesa o se usa la caché.
+    if collection.count() == 0:
+        from_cache_flag = False
         print(
-            f"Artículo {article_url_str} no en caché o expirado. PROCESANDO...")
-        # 1. Scrape
-        scraped_text = scrape_wikipedia_content(article_url_str)
+            f"Colección '{collection_name}' está vacía. Procesando y poblando...")
 
-        # 2. Chunking
+        # Proceso de scraping, chunking y embedding del artículo.
+        scraped_text = scrape_wikipedia_content(article_url_str)
         chunks = split_text_into_chunks(scraped_text)
         if not chunks:
             raise HTTPException(
-                status_code=404, detail="No se pudo dividir el texto del artículo en chunks.")
+                status_code=404, detail="No se pudo dividir el texto en chunks.")
 
-        # 4. Embeddings de los Chunks
-        processed_chunk_embeddings = []
-        valid_chunks_for_processing = []
-        for i, chunk_text in enumerate(chunks):
-            try:
-                # Llama a la función actualizada
-                embedding = get_embedding(chunk_text)
-                processed_chunk_embeddings.append(embedding)
-                valid_chunks_for_processing.append(chunk_text)
-            except HTTPException as e:
-                # Si get_embedding lanza una excepción después de reintentos, aquí decidimos si continuar
-                print(
-                    f"ADVERTENCIA FINAL: No se pudo generar embedding para chunk {i} ('{chunk_text[:30]}...'). Detalle: {e.detail}. Saltando este chunk.")
-
-        if not valid_chunks_for_processing or not processed_chunk_embeddings:
+        valid_chunks = [chunk for chunk in chunks if chunk.strip()]
+        if not valid_chunks:
             raise HTTPException(
-                status_code=500, detail="No se pudieron generar embeddings para ningún chunk del artículo.")
+                status_code=500, detail="El contenido del artículo no generó chunks válidos.")
 
-        # Guardar en caché los chunks que sí se pudieron procesar y sus embeddings
-        article_cache[article_url_str] = {
-            "chunks": valid_chunks_for_processing,
-            "embeddings": processed_chunk_embeddings,
-            "timestamp": time.time()
-        }
-        # Usar los datos recién procesados para la respuesta actual
-        chunks = valid_chunks_for_processing
-        chunk_embeddings = processed_chunk_embeddings
+        chunk_embeddings = [get_embedding(chunk) for chunk in valid_chunks]
+
+        # Añadir los datos a la colección.
+        collection.add(
+            embeddings=chunk_embeddings,
+            documents=valid_chunks,
+            ids=[f"chunk_{i}" for i in range(len(valid_chunks))]
+        )
         print(
-            f"Artículo {article_url_str} procesado y AÑADIDO/ACTUALIZADO EN CACHÉ.")
+            f"Colección '{collection_name}' poblada con {len(valid_chunks)} chunks.")
+    else:
+        from_cache_flag = True
+        print(
+            f"Colección '{collection_name}' ya existe y tiene datos. Usando caché.")
 
-    # 3. Embedding de la Pregunta (siempre se hace, ya que la pregunta cambia)
+    # Obtener embedding para la pregunta del usuario.
     question_embedding = get_embedding(request.question)
 
-    # 5. Cálculo de Similitud (con los embeddings del caché o recién generados)
-    if not chunk_embeddings:  # Doble chequeo por si el caché estaba vacío o algo raro
-        raise HTTPException(
-            status_code=500, detail="No hay embeddings de chunks disponibles para calcular similitud.")
-
-    similarities = cosine_similarity(
-        np.array([question_embedding]),
-        np.array(chunk_embeddings)
-    )[0]
-
-    # 6. Encontrar el Mejor Chunk
-    most_relevant_chunk_index = np.argmax(similarities)
-    best_chunk_text = chunks[most_relevant_chunk_index]
-    best_similarity_score = float(similarities[most_relevant_chunk_index])
-
-    # 7. Llamar al LLM
-    llm_generated_answer = get_llm_response(
-        context=best_chunk_text, question=request.question)
-
-    return ExplainResponse(
-        best_chunk=best_chunk_text,
-        similarity_score=best_similarity_score,
-        llm_answer=llm_generated_answer,
-        from_cache=from_cache_flag  # Indicamos si se usó el caché
+    # Consultar a la base de datos vectorial para encontrar el chunk más relevante.
+    query_results = collection.query(
+        query_embeddings=[question_embedding],
+        n_results=1
     )
+
+    if not query_results or not query_results.get('documents') or not query_results['documents'][0]:
+        raise HTTPException(
+            status_code=500, detail="La consulta a la base de datos vectorial no devolvió resultados.")
+
+    best_chunk_text = query_results['documents'][0][0]
+    # La distancia es una medida de diferencia (menor es mejor). La convertimos a similitud (mayor es mejor).
+    similarity_score = 1 - query_results['distances'][0][0]
+
+    # --- INICIO DE LA LÓGICA MODIFICADA ---
+
+    # 1. Comparamos el puntaje de similitud con nuestro umbral predefinido.
+    if similarity_score < SIMILARITY_THRESHOLD:
+
+        # Si la similitud es muy baja, no llamamos al LLM.
+        print(
+            f"Similitud baja ({similarity_score:.2f}) detectada, por debajo del umbral ({SIMILARITY_THRESHOLD}). Saltando llamada al LLM.")
+
+        # 2. Creamos el mensaje predefinido que se enviará al frontend.
+        predefined_answer = "Favor necesitamos un poco más de contexto en tu pregunta, ya que no queremos entregarte una respuesta que haga al LLM alucinar."
+
+        # 3. Devolvemos una respuesta con el mensaje especial.
+        return ExplainResponse(
+            best_chunk=best_chunk_text,
+            similarity_score=similarity_score,
+            llm_answer=predefined_answer,
+            from_cache=from_cache_flag
+        )
+    else:
+        # Si la similitud es suficientemente alta, el flujo continúa como siempre.
+        print(
+            f"Similitud alta ({similarity_score:.2f}) detectada. Llamando al LLM...")
+
+        # 4. Llamamos al LLM para que genere la respuesta.
+        llm_generated_answer = get_llm_response(
+            context=best_chunk_text, question=request.question)
+
+        return ExplainResponse(
+            best_chunk=best_chunk_text,
+            similarity_score=similarity_score,
+            llm_answer=llm_generated_answer,
+            from_cache=from_cache_flag
+        )
+    # --- FIN DE LA LÓGICA MODIFICADA ---
