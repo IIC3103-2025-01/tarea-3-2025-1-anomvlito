@@ -1,17 +1,25 @@
+// 1. Se añaden 'Modal' a los imports de react-bootstrap
 import React, { useState, useEffect, useRef } from "react";
 import {
   Container,
   Form,
   Button,
   Card,
-  ListGroup,
   Spinner,
   Alert,
   Row,
   Col,
+  Modal, // Añadido
 } from "react-bootstrap";
+// 2. Se añade la importación de los íconos
+import { Gear, MoonStarsFill, SunFill } from "react-bootstrap-icons";
 
-function ChatInterface() {
+// 3. El componente ahora acepta las props 'theme' y 'toggleTheme'
+function ChatInterface({ theme, toggleTheme }) {
+  // 4. Se añade un único estado nuevo para controlar el modal
+  const [showSettings, setShowSettings] = useState(false);
+
+  // --- El resto de tus estados y lógica originales se mantienen intactos ---
   const [wikiURL, setWikiURL] = useState("");
   const [userQuestion, setUserQuestion] = useState("");
   const [conversation, setConversation] = useState([]);
@@ -55,7 +63,6 @@ function ChatInterface() {
     ]);
     setUserQuestion("");
 
-    // LÍNEA 1 MODIFICADA/AÑADIDA: Definir API_BASE_URL leyendo de variables de entorno
     const API_BASE_URL =
       import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
@@ -63,10 +70,9 @@ function ChatInterface() {
       url: wikiURL,
       question: questionToSubmit,
     });
-    console.log("Usando API_BASE_URL:", API_BASE_URL); // Para depurar
+    console.log("Usando API_BASE_URL:", API_BASE_URL);
 
     try {
-      // LÍNEA 2 MODIFICADA: Usar API_BASE_URL en la URL del fetch
       const response = await fetch(`${API_BASE_URL}/explain`, {
         method: "POST",
         headers: {
@@ -108,9 +114,21 @@ function ChatInterface() {
   };
 
   return (
+    // Se mantiene tu contenedor principal original
     <Container className="my-4" style={{ maxWidth: "768px" }}>
       <Card>
-        <Card.Header as="h2">Wikipedia Explainer Chat</Card.Header>
+        {/* 5. El Card.Header es el único elemento JSX principal que se modifica */}
+        <Card.Header
+          as="h5"
+          className="d-flex justify-content-between align-items-center"
+        >
+          <span>Wiki Explainer Chat 🦉</span>
+          <Button variant="secondary" onClick={() => setShowSettings(true)}>
+            <Gear size={20} />
+          </Button>
+        </Card.Header>
+
+        {/* El Card.Body y todo su contenido se mantienen exactamente igual que en tu código original */}
         <Card.Body>
           <Form onSubmit={handleSubmit}>
             <Form.Group className="mb-3">
@@ -129,9 +147,10 @@ function ChatInterface() {
             <div
               className="mb-3"
               style={{
-                height: "400px",
+                minHeight: "300px", // Altura mínima
+                maxHeight: "55vh",
                 overflowY: "auto",
-                border: "1px solid #dee2e6",
+                border: "1px solid var(--bs-border-color)",
                 padding: "10px",
                 borderRadius: "0.25rem",
               }}
@@ -276,6 +295,34 @@ function ChatInterface() {
           </Form>{" "}
         </Card.Body>
       </Card>
+
+      {/* 6. El código del Modal se añade aquí, fuera del Card pero dentro del Container */}
+      <Modal show={showSettings} onHide={() => setShowSettings(false)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>Configuración</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <h5>Apariencia</h5>
+          <p>Cambia entre el modo claro y oscuro para toda la aplicación.</p>
+          <Button
+            variant="outline-primary"
+            onClick={toggleTheme}
+            className="w-100"
+          >
+            {theme === "light" ? (
+              <MoonStarsFill className="me-2" />
+            ) : (
+              <SunFill className="me-2" />
+            )}
+            Cambiar a Modo {theme === "light" ? "Oscuro" : "Claro"}
+          </Button>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowSettings(false)}>
+            Cerrar
+          </Button>
+        </Modal.Footer>
+      </Modal>
     </Container>
   );
 }
